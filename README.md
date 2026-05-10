@@ -1,0 +1,9 @@
+En avril 2026 je relance mon activité de freelance après avoir passé 3 ans en tant que CTO d'une startup. Ces 3 ans ont été très agité, malheureusement malgré le travail intensif, je n'ai pas eu le temps de mettre en place une infrastructure scalable. 
+
+Cela s'explique par 2 éléments majeurs. Premièrement je n'avais encore jamais eu à implémenter une architecture scalable sur un SaaS. Deuxièmement je n'avais pas le temps de faire les choses dans l'ordre : recherche, cadrage, développement. 
+
+Je tire donc 2 conlusions majeure de ce projet côté technique. Bien que travailler sur un projet de SaaS nécessite d'aller vite on perd toujours du temps en prenant des raccourcis. L'architecture initiale d'un SaaS peut être minimaliste mais il faut malgré tout anticipé le volume et ne pas construire l'API endpoint seulement sous forme REST ou CRUD. L'accompagné d'une logique minimaliste d'Event Drive Architecture (EDA) permet d'anticipé une refactorisation future pour accélérer l'application. Cela permet aussi d'avoir un processus de développement de nouvelles features bien plus rapide. 
+
+J'apprend de mes erreurs, c'est pour cela qu'aujourd'hui je prend le temps d'implémenter une EDA minimaliste sur un projet de SaaS. L'objectif de ce SaaS est de répondre à mes besoins en tant que Freelance : Pipeline commerciale, Devis, Gestion de contrats, Suivi de projets, Suivi des paiements, Dashboard. Le tout en documentant le développement en public pour obtenir des retours constructif et montrer le processus de création.
+
+Vous pourrez suivre l'évolution de ce projet sur ce repository [GitHub](https://github.com/AreAtomic/saas-freelance-building-in-public) et sur mon site web [aureliensebe.com/blog](aureliensebe.com/blog)

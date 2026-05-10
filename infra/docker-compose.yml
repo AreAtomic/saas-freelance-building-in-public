@@ -1,0 +1,31 @@
+# PostgreSQL MVP local — SaaS Gest. Contrats Freelance
+# Voir docs/PLAN_DEVELOPPEMENT_MVP.md Phase 0
+#
+# Usage (depuis ce dossier) :
+#   docker compose up -d
+#
+# puis appliquer le schéma :
+#   docker compose exec -T postgres psql -U gestion -d gestion_mvp -f -
+# avec le contenu de docs/db/001_schema_mvp.sql (pipé depuis la racine crm-freelance).
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: crm_freelance_postgres_mvp
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: gestion
+      POSTGRES_PASSWORD: gestion
+      POSTGRES_DB: gestion_mvp
+    ports:
+      - "5432:5432"
+    volumes:
+      - crm_freelance_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gestion -d gestion_mvp"]
+      interval: 5s
+      timeout: 5s
+      retries: 8
+
+volumes:
+  crm_freelance_pgdata:

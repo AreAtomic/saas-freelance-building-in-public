@@ -1,0 +1,397 @@
+// SaaS Freelance Contrats — schéma MVP Postgres
+// Source de vérité décisions : gestionnaire-contrats-freelance-spec.json → decisions_modele_donnees_mvp
+// Rendu diagramme : https://dbdiagram.io (import ce fichier DBML)
+
+Project gestionnaire_contrats_mvp {
+  database_type: "PostgreSQL"
+  Note: "1 user = 1 tenant (tenant_id = users.id). Pas d’agrégation HT×TTC sur une ligne sans suffixe explicite."
+}
+
+TableGroup auth_et_billing_saas {
+  users
+  user_print_profiles
+  subscriptions
+  subscription_payments
+}
+
+TableGroup commerce {
+  prospects
+  clients
+  contacts
+  interactions
+  tasks
+  projects
+  project_tasks
+  devis
+  lignes_devis
+  contrats
+  lignes_contrat
+}
+
+TableGroup paiement_metier_client {
+  contract_payment_lines
+}
+
+TableGroup documents {
+  documents
+}
+
+TableGroup alerting {
+  alerts
+}
+
+/// Compte utilisateur = boundary tenant ; aucun partage multi-user au MVP
+Table users {
+  id uuid [pk, note: 'gen_random_uuid()']
+  email varchar(320) [not null, unique]
+  email_verified_at timestamptz
+  password_hash varchar [note: 'ou auth externe OAuth — colonne nullable si SSO only']
+  mollie_customer_id varchar(40) [note: 'cst_* — liaison API Mollie']
+  mollie_mandate_id varchar(40) [note: 'mandate prélèvement']
+  created_at timestamptz [default: `now()`]
+  updated_at timestamptz [default: `now()`]
+
+  Note: "tenant métier sur les autres tables référence users.id via tenant_id."
+}
+
+/// Profil AE / pied de page impressions / préf TVA défaut pour documents
+Table user_print_profiles {
+  user_id uuid [pk, ref: > users.id]
+  denomination varchar(512) [not null, note: "Nom commercial ou AE"]
+  email_contact varchar(320)
+  telephone varchar(64)
+  adresse varchar(2048)
+  siret varchar(32)
+  tva_intracommunautaire varchar(32)
+  applique_tva_par_defaut boolean [not null, default: true, note: 'Utilisateur peut facturer sans TVA (taux 0 ou mention exoneration dans texte légal).']
+  mentions_legales text
+  created_at timestamptz [default: `now()`]
+  updated_at timestamptz [default: `now()`]
+}
+
+Table subscriptions {
+  id uuid [pk, note: 'gen_random_uuid()']
+  user_id uuid [not null, ref: > users.id]
+  mollie_subscription_id varchar(40) [not null, note: 'sub_*']
+  status varchar(32) [not null, note: 'active pending suspended cancelled completed']
+  plan_id varchar(64) [not null, note: 'Cle interne ex. pro_monthly']
+  currency char(3) [not null, default: 'EUR']
+  next_payment_date date
+  ends_at timestamptz [note: "Accès résiliable mais actif jusqu’à cette date"]
+  raw_payload_snapshot jsonb [note: 'optionnel dernier webhook Mollie']
+  created_at timestamptz [default: `now()`]
+  updated_at timestamptz [default: `now()`]
+
+  indexes {
+    (user_id)
+    (mollie_subscription_id) [unique]
+  }
+}
+
+Table subscription_payments {
+  id uuid [pk, note: 'gen_random_uuid()']
+  subscription_id uuid [not null, ref: > subscriptions.id]
+  user_id uuid [not null, ref: > users.id]
+  mollie_payment_id varchar(40) [not null, note: 'tr_*']
+  amount_cents bigint [not null]
+  currency char(3) [not null]
+  status varchar(32) [not null, note: 'paid failed expired open canceled']
+  paid_at timestamptz
+  failure_reason varchar(512)
+  created_at timestamptz [default: `now()`]
+
+  indexes {
+    (mollie_payment_id) [unique]
+    (subscription_id)
+  }
+}
+
+/// Pipeline commercial avant signature définitive
+Table prospects {
+  id uuid [pk, note: 'gen_random_uuid()']
+  tenant_id uuid [not null, ref: > users.id]
+  nom varchar(512) [not null]
+  statut varchar(64) [not null]
+  type_contrat varchar(64) [not null]
+  role_visé varchar(512)
+  site_web varchar(1024)
+  score smallint [default: 0]
+  notes text
+  archived_at timestamptz
+  created_at timestamptz [default: `now()`]
+  updated_at timestamptz [default: `now()`]
+
+  indexes {
+    (tenant_id)
+  }
+}
+
+Table clients {
+  id uuid [pk, note: 'gen_random_uuid()']
+  tenant_id uuid [not null, ref: > users.id]
+  prospect_id uuid [ref: > prospects.id]
+  nom varchar(512) [not null]
+  email varchar(320)
+  telephone varchar(64)
+  adresse varchar(2048)
+  siret varchar(32)
+  notes text
+  archived_at timestamptz
+  created_at timestamptz [default: `now()`]
+  updated_at timestamptz [default: `now()`]
+
+  indexes {
+    (tenant_id)
+  }
+
+  Note: "Index partiel SQL UNIQUE (tenant_id, prospect_id) WHERE prospect_id IS NOT NULL."
+}
+
+Table contacts {
+  id uuid [pk, note: 'gen_random_uuid()']
+  tenant_id uuid [not null, ref: > users.id]
+  prospect_id uuid [ref: > prospects.id]
+  client_id uuid [ref: > clients.id]
+  nom varchar(512) [not null]
+  role_interne varchar(256)
+  email varchar(320)
+  linkedin varchar(512)
+  notes text
+  created_at timestamptz [default: `now()`]
+  updated_at timestamptz [default: `now()`]
+
+  indexes {
+    (tenant_id)
+    (prospect_id)
+    (client_id)
+  }
+}
+
+Table interactions {
+  id uuid [pk, note: 'gen_random_uuid()']
+  tenant_id uuid [not null, ref: > users.id]
+  prospect_id uuid [ref: > prospects.id]
+  client_id uuid [ref: > clients.id]
+  contact_id uuid [ref: > contacts.id]
+  type_evenement varchar(64) [not null]
+  date_evenement date [not null]
+  resume varchar(4096)
+  notes text
+  created_at timestamptz [default: `now()`]
+  updated_at timestamptz [default: `now()`]
+
+  indexes {
+    (tenant_id)
+    (prospect_id)
+    (client_id)
+  }
+}
+
+Table tasks {
+  id uuid [pk, note: 'gen_random_uuid()']
+  tenant_id uuid [not null, ref: > users.id]
+  prospect_id uuid [ref: > prospects.id]
+  client_id uuid [ref: > clients.id]
+  titre varchar(1024) [not null]
+  date_echeance date
+  statut varchar(64) [not null]
+  notes text
+  created_at timestamptz [default: `now()`]
+  updated_at timestamptz [default: `now()`]
+
+  indexes {
+    (tenant_id)
+    (date_echeance)
+  }
+}
+
+Table projects {
+  id uuid [pk, note: 'gen_random_uuid()']
+  tenant_id uuid [not null, ref: > users.id]
+  client_id uuid [ref: > clients.id]
+  prospect_id uuid [ref: > prospects.id]
+  nom varchar(512) [not null]
+  date_debut_prevue date
+  date_fin_prevue date
+  statut varchar(64)
+  notes text
+  archived_at timestamptz
+  created_at timestamptz [default: `now()`]
+  updated_at timestamptz [default: `now()`]
+
+  indexes {
+    (tenant_id)
+  }
+
+  Note: "Au moins un lien client OU prospect doit être défini selon métier MVP."
+}
+
+Table project_tasks {
+  id uuid [pk, note: 'gen_random_uuid()']
+  tenant_id uuid [not null, ref: > users.id]
+  project_id uuid [not null, ref: > projects.id]
+  titre varchar(1024) [not null]
+  statut varchar(64) [not null]
+  notes text
+  created_at timestamptz [default: `now()`]
+  updated_at timestamptz [default: `now()`]
+
+  indexes {
+    (tenant_id)
+    (project_id)
+  }
+}
+
+Table devis {
+  id uuid [pk, note: 'gen_random_uuid()']
+  tenant_id uuid [not null, ref: > users.id]
+  client_id uuid [not null, ref: > clients.id]
+  numero varchar(64) [not null]
+  statut varchar(32) [not null, note: 'brouillon envoyé accepté refusé expiré archivé']
+  date_validite date
+  taux_tva numeric(7,4) [not null, default: '0']
+  conditions text
+  notes text
+  totals_total_ht numeric(14,4) [not null, default: 0, note: 'calcul serveur lignes ou trigger']
+  totals_tva_amount numeric(14,4) [not null, default: 0]
+  totals_total_ttc numeric(14,4) [not null, default: 0]
+  archived_at timestamptz
+  sent_at timestamptz [note: 'optionnel — horodater envoi même si pas facture légal MVP']
+  created_at timestamptz [default: `now()`]
+  updated_at timestamptz [default: `now()`]
+
+  indexes {
+    (tenant_id)
+  }
+
+  Note: "UNIQUE (tenant_id, numero). Hard-delete interdit applicativement si statut envoyé ou au-delà."
+}
+
+Table lignes_devis {
+  id uuid [pk, note: 'gen_random_uuid()']
+  tenant_id uuid [not null, ref: > users.id]
+  devis_id uuid [not null, ref: > devis.id]
+  position smallint [not null, default: 0]
+  description varchar(4096)
+  quantite numeric(14,6) [not null, default: '1']
+  prix_unitaire_ht numeric(14,4) [not null, default: 0]
+  montant_ht numeric(14,4) [not null, default: 0]
+  montant_ttc numeric(14,4) [not null, default: 0, note: 'ligne niveau ligne si besoin rapport ; peut être recalculé']
+  created_at timestamptz [default: `now()`]
+
+  indexes {
+    (devis_id)
+  }
+}
+
+Table contrats {
+  id uuid [pk, note: 'gen_random_uuid()']
+  tenant_id uuid [not null, ref: > users.id]
+  client_id uuid [not null, ref: > clients.id]
+  devis_id uuid [ref: > devis.id]
+  numero varchar(64) [not null]
+  statut varchar(32) [not null]
+  date_debut date
+  date_fin date
+  taux_tva numeric(7,4) [not null, default: '0']
+  conditions text [note: 'HTML ou texte brut selon editeur riche MVP']
+  notes text
+  totals_total_ht numeric(14,4) [not null, default: 0]
+  totals_tva_amount numeric(14,4) [not null, default: 0]
+  totals_total_ttc numeric(14,4) [not null, default: 0]
+  archived_at timestamptz
+  facture_envoyee boolean [default: false]
+  date_envoi_facture date
+  montant_attendu_ht numeric(14,4)
+  montant_attendu_ttc numeric(14,4)
+  signed_at timestamptz [note: 'optionnel — marque jalonnement statut signé']
+  created_at timestamptz [default: `now()`]
+  updated_at timestamptz [default: `now()`]
+
+  indexes {
+    (tenant_id)
+  }
+
+  Note: "UNIQUE (tenant_id, numero). Suivi client : pas de colonne statut paiement dérivée en base ; cohérence attendu HT vs TTC imposée applicativement. Hard-delete interdit dès signature irréversible."
+}
+
+Table lignes_contrat {
+  id uuid [pk, note: 'gen_random_uuid()']
+  tenant_id uuid [not null, ref: > users.id]
+  contrat_id uuid [not null, ref: > contrats.id]
+  position smallint [not null, default: 0]
+  description varchar(4096)
+  quantite numeric(14,6) [not null, default: '1']
+  prix_unitaire_ht numeric(14,4) [not null, default: 0]
+  montant_ht numeric(14,4) [not null, default: 0]
+  montant_ttc numeric(14,4) [not null, default: 0]
+  created_at timestamptz [default: `now()`]
+
+  indexes {
+    (contrat_id)
+  }
+}
+
+/// Encaissements client liés au contrat livrables (hors paiements Mollie SaaS)
+Table contract_payment_lines {
+  id uuid [pk, note: 'gen_random_uuid()']
+  tenant_id uuid [not null, ref: > users.id]
+  contrat_id uuid [not null, ref: > contrats.id]
+  date_encaissement date [not null]
+  montant_ht numeric(14,4)
+  montant_ttc numeric(14,4)
+  libelle_interne varchar(512)
+  created_at timestamptz [default: `now()`]
+
+  indexes {
+    (contrat_id)
+  }
+
+  Note: "État payé/non payé/partiel affiché côté appli après agrégat."
+}
+
+Table documents {
+  id uuid [pk, note: 'gen_random_uuid()']
+  tenant_id uuid [not null, ref: > users.id]
+  storage_key varchar(1024) [not null]
+  fichier_nom varchar(512) [not null]
+  mime_type varchar(192)
+  taille_octets bigint
+  nom_affichage varchar(512)
+  project_id uuid [ref: > projects.id]
+  client_id uuid [ref: > clients.id]
+  contrat_id uuid [ref: > contrats.id]
+  created_at timestamptz [default: `now()`]
+
+  indexes {
+    (tenant_id)
+    (project_id)
+    (client_id)
+    (contrat_id)
+  }
+
+  Note: "CHECK SQL : exactement un des trois FK projet/client/contrat non null selon évolution polycible."
+}
+
+Table alerts {
+  id uuid [pk, note: 'gen_random_uuid()']
+  tenant_id uuid [not null, ref: > users.id]
+  code_type varchar(64) [not null, note: 'TASK_OVER_DUE_CONTRACT_ENDING_EXPIRED_QUOTE_PAYMENT_EXPECTED …']
+  titre varchar(512) [not null]
+  corps text
+  payload_json jsonb
+  entity_type varchar(64)
+  entity_id uuid
+  source_generation varchar(32) [not null, note: 'cron instantaneous']
+  read_at timestamptz
+  dismissed_until timestamptz [note: 'Snooze jusqu’à instant']
+  archived_at timestamptz
+  created_at timestamptz [default: `now()`]
+
+  indexes {
+    (tenant_id)
+    (dismissed_until)
+    (archived_at)
+  }
+}
+

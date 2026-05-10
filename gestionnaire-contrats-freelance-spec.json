@@ -1,0 +1,658 @@
+{
+  "project": {
+    "name": "Gestionnaire de Contrats Freelance SaaS",
+    "code": "gestionnaire-contrats-freelance",
+    "version": "2.4",
+    "created_at": "2026-05-07",
+    "updated_at": "2026-05-10",
+    "notes_version": "2.4+ poc_tracking figé (plus de lignes À faire POC) ; décisions données + artefacts db/plan — voir decisions_modele_donnees_mvp",
+    "status": "validated",
+    "poc_reference": "prospection/",
+    "saas_code_root": "crm-freelance/"
+  },
+  "cahier_des_charges": {
+    "vision": "Plateforme tout-en-un pour freelances français : pipeline commercial, devis et contrats, suivi simple des paiements et alertes, sans disperser données entre fichiers.",
+    "probleme": "Manque de visibilité contrats/devis/paiements et bricolage Word/Excel/Drive.",
+    "solution": "Parcours Devis à Contrat à Paiement à Suivi dans une seule app ; freemium plafonné puis abonnement Mollie.",
+    "objectifs_mesurables": [
+      { "objectif": "Rentabilité outil SaaS", "metrique": "MRR", "cible": "500 EUR en 5-6 mois" },
+      { "objectif": "Acquisition payante", "metrique": "Clients abonnés", "cible": "≈ 26 × 19 EUR/mois" },
+      { "objectif": "Adoption valeur", "metrique": "Parcours complet sans fichier externe critique", "cible": "Marie utilise devis+contrat+suivi paiement dans l'outil" }
+    ],
+    "perimetre": {
+      "in": [
+        "12 bounded contexts Prospect, Tâches, Projets, Documents, Clients, Devis, Contrats, Alertes, Paiements, Auth, Billing, Notifications",
+        "Freemium 3 prospects + 3 clients puis Mollie",
+        "Trajectoire technique documentée infra_phases : MVP infra minimal puis évolution vers EDA/CQRS/bus (pas de périmètre métier différent)",
+        "Print PDF via print CSS ou génération serveur",
+        "Tracking paiement sans facturation PDF interne (e-invoice V3 hors scope)",
+        "Éditeur visuel champs riches (pas Markdown brut utilisateur)",
+        "Multi-tenant par utilisateur"
+      ],
+      "out": [
+        "E-signature Yousign (V2+)",
+        "Chorus Factur-X / e-invoice obligatoire 2027 (V3)",
+        "Stripe paiement lien (V2+)",
+        "Export FEC",
+        "Time tracking",
+        "Multi-devise",
+        "Gestion équipe partagée (V2+)"
+      ]
+    },
+    "contraintes": [
+      "MVP infra minimal : Nest monolithe modulaire, Postgres schéma unique tenant-scopé, Mollie, OVH S3 — détail infra_phases.mvp_infra_minimal",
+      "V2 aspirationnel : EDA/DDD/CQRS, Postgres write/read, RabbitMQ, Redis — détail infra_phases.v2_aspirationnel",
+      "Next.js déployé Vercel ; Auth Next Auth ou équivalent ; chaque requête métier porte le tenant"
+    ]
+  },
+  "infra_phases": {
+    "introduction": "Deux trajectoires cohabitent : MVP infra minimal pour les premiers abonnés et faible surface ops ; V2 aspirationnelle pour portfolio et scalabilité (bus, projections dédiées). Le périmètre fonctionnel produit est commun.",
+    "regle_ui_lien_organisationnel": {
+      "libelle_colonne": "Lié à",
+      "resolution_navigation": [
+        "Si un client résolu : client_id sur l’entité OU client existant avec prospect_id égal au prospect de l’entité → lien vers fiche client",
+        "Sinon si prospect_id renseigné → lien vers fiche prospect (pipeline)",
+        "Sinon afficher —"
+      ],
+      "reference_poc": "prospection/index.html — resolveLinkedClient / orgNavTarget / orgLinkCell"
+    },
+    "mvp_infra_minimal": {
+      "objectif": "Livrer le SaaS avec le minimum de services et de chemins async à déboguer.",
+      "patterns": [
+        "NestJS monolithe modulaire (dossiers par domaine : prospects, clients, devis, contrats, billing, etc.)",
+        "PostgreSQL schéma unique ; colonne tenant_id sur toutes les tables métier ; transactions sur opérations critiques (conversion prospect, webhooks Mollie)",
+        "Pas de bus message externe au MVP ; option table outbox Postgres si jobs différés deviennent nécessaires",
+        "Notifications écran : revalidation cache Next.js et/ou TanStack Query après mutation plutôt que SSE/WebSocket (cf. NOT-RGL-01)",
+        "Hors MVP sauf besoin mesuré : Redis, RabbitMQ, second schéma read-only"
+      ],
+      "stack": [
+        { "couche": "Frontend", "technologie": "Next.js (App Router)", "justification": "Vercel, SSR, intégration auth usuelle" },
+        { "couche": "Backend", "technologie": "Nest.js monolithe (modules par domaine)", "justification": "Structure DDD-friendly sans infra message bus" },
+        { "couche": "Données", "technologie": "PostgreSQL (schéma unique, tenant sur chaque ligne)", "justification": "Source de vérité simple, sauvegardes et migrations directes" },
+        { "couche": "Files", "technologie": "OVH Object Storage (S3-compatible)", "justification": "PDF et pièces" },
+        { "couche": "Billing app", "technologie": "Mollie (abonnements + webhooks)", "justification": "Conforme cible UE ; pas de Stripe au MVP SaaS facturé aux freelances" },
+        { "couche": "Jobs légers(option)", "technologie": "Cron Nest ou queue locale", "justification": "Transitions de projection devis expire si implémentées côté serveur" }
+      ],
+      "hors_scope_mvp_explicit": [
+        "RabbitMQ",
+        "Schémas Postgres write/read séparés",
+        "Projections CQRS asynchrones généralisées",
+        "Redis comme cache obligatoire",
+        "NOT-RGL-01 temps réel (SSE/WebSocket)"
+      ]
+    },
+    "v2_aspirationnel": {
+      "objectif": "Architecture portfolio : bounded contexts découpés, bus, projecteurs scalables, cache read.",
+      "patterns": [
+        "Nest EDA / DDD / CQRS par contexte",
+        "Postgres schéma write + event store ; schéma read ou tables projetées dénormalisées",
+        "RabbitMQ avec consommateurs idempotents, DLQ documentée",
+        "Redis pour catalogues et invalidation selective des read models"
+      ],
+      "stack": [
+        { "couche": "Frontend", "technologie": "Next.js (App Router)", "justification": "Vercel 0EUR host + SSR" },
+        { "couche": "Backend", "technologie": "Nest.js EDA CQRS", "justification": "Isolation bounded contexts" },
+        { "couche": "Ecriture", "technologie": "PostgreSQL schéma write + event store agrégats", "justification": "Traçabilité commandes et événements" },
+        { "couche": "Lecture", "technologie": "PostgreSQL schéma read / projections dénormalisées", "justification": "Listes et dashboard performants" },
+        { "couche": "Bus", "technologie": "RabbitMQ", "justification": "Découplage projectors et handlers" },
+        { "couche": "Cache", "technologie": "Redis", "justification": "Catalogues, config, invalidation" },
+        { "couche": "Files", "technologie": "OVH Object Storage S3", "justification": "PDF et pièces" },
+        { "couche": "Billing", "technologie": "Mollie", "justification": "Abonnements EU" }
+      ],
+      "notes_migration": "Introduire bus et read models après stabilisation du domaine MVP ; documenter idempotence, ordre des événements (conversion client, webhooks billing)."
+    }
+  },
+  "decisions_modele_donnees_mvp": {
+    "validated_at": "2026-05-10",
+    "resume": "Validations pour ERD DDL MVP — pas de multi-utilisateur espaces partagés ; paiement métier client distinct du billing SaaS Mollie.",
+    "1_tenant_et_comptes": {
+      "multi_utilisateur_workspace": false,
+      "modele": "Une personne = un espace de données isolé (équivalence pratique 1 compte utilisateur = 1 tenant). Pas de collègue/partage de tenant au MVP.",
+      "tenant_id": "Présent sur chaque ligne métier ; valeur alignée avec l’identité unique du compte (ex. égale au user pk ou fk vers table tenant singleton par user)."
+    },
+    "2_monetaire_ht_ttc": {
+      "principe": "Colonnes explicitement nominées *_ht et *_ttc ; interdiction de mélanger deux bases sans suffixe lisible dans la même projection UI.",
+      "tva_au_choix": "L’utilisateur indique sur le profil métier imprimé / par document s’il facture avec ou sans TVA (présence ou taux 0 %) ; les montants restent distingués.",
+      "kpi_dashboard": "Même convention que CLI-VIS-02 / US-008 : aucune ligne d’agrégation qui souscrit HT contre TTC."
+    },
+    "3_paiement_metier_encaissement_client": {
+      "colonnes_metier_contractuelles_stockées": ["facture_envoyee_boolean", "date_envoi_facture", "montant_attendu (base documentée ht ou ttc coherent par contrat)", "encaissements via lignes normalisées (payment_lines métier livrables client)"],
+      "pas_enum_paiement_statut_en_base": "Aucune colonne énum brute « paiement_statut » imposée : l’état affiché (non payé / partiel / payé) reste dérivé côté application à partir des montants conformément PAY-RGL-01.",
+      "note_distinction_billing_saas": "Les statuts Mollie (paid, failed, etc.) vivent uniquement dans les tables facturation du SaaS (voir point 6), pas à confondre avec le tracking encaissement client."
+    },
+    "4_lignes_devis_contrat": {
+      "structure": "Tables relationnelles normalisées devis_lines et contracts_lines (ou noms équivalents), pas uniquement JSONB pour le coeur des montants ligne."
+    },
+    "5_documents_fichiers": {
+      "metadonnees": "Polymorphe : rattachement logique projet et/ou client et/ou contrat (colonnes discriminantes document_owner_type + fk optionnelles, ou schéma équivalent éviter orphelins).",
+      "fichiers_binaires": "Blob chemin/key OVH Object Storage hors DB."
+    },
+    "6_billing_saas_mollie": {
+      "tables": {
+        "users_ou_accounts": {
+          "role": "Lier utilisateur local à Mollie pour abonnements et futurs paiements sans re-collecter les coordonnées bancaires.",
+          "colonnes": [
+            "mollie_customer_id — id client Mollie (ex. cst_…) ; obligatoire pour abonnements",
+            "mollie_mandate_id — mandate de prélèvement après autorisation utilisateur"
+          ]
+        },
+        "subscriptions_saas": {
+          "colonnes": [
+            "mollie_subscription_id",
+            "status — active | pending | suspended | cancelled | completed (aligné doc Mollie / usage produit)",
+            "plan_id — réf interne configuration (ex. pro_monthly)",
+            "next_payment_date",
+            "ends_at — accès jusqu’à fin de période après annulation"
+          ]
+        },
+        "invoices_ou_payments_saas": {
+          "description": "Trace chaque prélèvement / paiement automatique échéance Mollie (support + compta interne outil)",
+          "colonnes": [
+            "mollie_payment_id (ex. tr_…)",
+            "amount — historiser valeur au jour J",
+            "currency",
+            "status — paid | failed | expired (état transaction Mollie)",
+            "subscription_id — FK table subscriptions SaaS"
+          ]
+        }
+      }
+    },
+    "7_alertes_historique_snooze": {
+      "exigence": "Persistance d’un historique d’alertes/rappels et possibilité de snooze (masquer jusqu’à date).",
+      "sketch_tables": [
+        "alerts : tenant_id, type_code, titre, payload_json, entity_type, entity_id, created_at, read_at nullable, dismissed_until (snooze), archived_at nullable, source_generation (cron|instant)"
+      ],
+      "note": "Recalcul périodique possible pour alertes données-driven ; lignes gardent traçabilité même après résolution métier."
+    },
+    "8_conversion_prospect_client_projets": {
+      "unicite_client_par_prospect": "Au plus une ligne clients.prospect_id par tenant après conversion réussie (contrainte unique partielle ou règle application stricte).",
+      "projets": "Plusieurs projets par client ou prospect conforme PRJ-CRE."
+    },
+    "9_suppression_hard_delete": {
+      "interdit_hard_delete_metier_critique": "Aucune suppression physique (DELETE) pour devis dès lors qu’statut >= envoyé ou équivalent défini catalogue ; aucun DELETE pour contrat dès signé (ou analogue statut irréversible). Stratégie : soft delete archived_at ou statut archived + blocage FK.",
+      "autres_entites": "Contacts / tâches / interactions : suppression possible selon matrice sous garde références financières (PRO-SUP / CLI-SUP)."
+    },
+    "10_diagrammes_outillage": {
+      "outil": "dbdiagram.io",
+      "format_source_repo": "Fichiers DBML versionnés (ex. `.agents/projets/crm-freelance/docs/db/schema-mvp.dbml`).",
+      "usage_local": "Éditer le .dbml dans Cursor ; extensions « DBML » pour coloration syntaxe ; coller/importer dans dbdiagram.io pour rendu PNG/PDF ou partage lien ; CI optionnelle via tooling Holistics `@dbml/cli` si vous standardisez la génération SQL plus tard.",
+      "lien_documentation_dbml": "https://dbml.dbdiagram.io/docs",
+      "artefacts_versionnes": [
+        "docs/db/schema-mvp.dbml",
+        "docs/db/001_schema_mvp.sql",
+        "docs/db/README.txt",
+        "docs/PLAN_DEVELOPPEMENT_MVP.md",
+        "infra/docker-compose.yml",
+        "infra/.env.example"
+      ],
+      "note_mapping_poc_json": "ex. interactions.type (POC) → interactions.type_evenement (SQL DDL) pour éviter mot réservé."
+    }
+  },
+  "personas": [
+    {
+      "id": "P1",
+      "nom": "Marie",
+      "role": "Freelance en croissance (2-3 ans, 25-80 kEUR/an)",
+      "friction": "Peur d'oublier une échéance, de perdre une version PDF, pas de fichier unique contrat/paiement.",
+      "objectif": "Zéro friction devis signé jusqu'au paiement constaté avec alertes",
+      "competence_tech": "intermediaire",
+      "canaux": ["LinkedIn", "email"],
+      "scenario": [
+        { "etape": 1, "action": "Ajoute prospects et passe client signé", "resultat": "Client créé depuis pipeline" },
+        { "etape": 2, "action": "Crée devis, imprime/envoie hors outil selon flux perso", "resultat": "Marque envoyé puis accepté" },
+        { "etape": 3, "action": "Génère contrat depuis devis accepté", "resultat": "Contrat lignes préremplies" },
+        { "etape": 4, "action": "Déclare facture envoyée et encaissements", "resultat": "Statut paiement automatique à jour" }
+      ],
+      "critere_succes": "Recommande si un seul endroit lui évite retard et erreurs de suivi."
+    }
+  ],
+  "matrice_axes": [
+    "Création",
+    "Modification",
+    "Visualisation",
+    "Suppression",
+    "Impression et export",
+    "Règles et calculs automatiques",
+    "Alertes et rappels",
+    "Parcours et conversion",
+    "Facturation de l’application (SaaS)",
+    "Sécurité, compte et limites"
+  ],
+  "matrice_fonctionnalites_detaillee": [
+    {
+      "bloc_id": "BLK-PRO",
+      "titre_bloc": "Le pipeline commercial permet de suivre chaque opportunité jusqu’à la décision du client.",
+      "resume_bloc": "Kanban à 6 statuts, scoring, fiche prospect, conversion en client signé.",
+      "sous_fonctionnalites": [
+        { "id": "PRO-CRE-01", "axe": "Création", "titre": "L’utilisateur ajoute une nouvelle opportunité sur le pipeline avec nom, rôle visé, type de mission et score.", "description": "La carte apparaît dans la colonne statut initiale (ex. DÉCOUVERTE) ; le score qualifie la priorité relative.", "persona_relevance": { "P1": 3 }, "moscow": "Must", "complexite": "Faible", "dependance": [] },
+        { "id": "PRO-MOD-01", "axe": "Modification", "titre": "L’utilisateur fait évoluer le statut du prospect et ajuste le score ou les notes au fil des échanges.", "description": "Les changements restent tracés côté domaine (événements) pour l’historique et les alertes.", "persona_relevance": { "P1": 3 }, "moscow": "Must", "complexite": "Moyenne", "dependance": ["PRO-CRE-01"] },
+        { "id": "PRO-VIS-01", "axe": "Visualisation", "titre": "L’utilisateur voit le kanban complet et ouvre la fiche détaillée d’un prospect pour consulter contacts, tâches et interactions.", "description": "La fiche centralise tout ce qui concerne l’opportunité avant signature.", "persona_relevance": { "P1": 3 }, "moscow": "Must", "complexite": "Moyenne", "dependance": ["PRO-CRE-01"] },
+        { "id": "PRO-SUP-01", "axe": "Suppression", "titre": "L’utilisateur peut retirer un prospect devenu inutile, avec confirmation pour éviter les suppressions accidentelles.", "description": "Règle métier : bloquer ou archiver si des entités financières y sont déjà liées.", "persona_relevance": { "P1": 2 }, "moscow": "Should", "complexite": "Faible", "dependance": ["PRO-VIS-01"] },
+        { "id": "PRO-PCV-01", "axe": "Parcours et conversion", "titre": "Quand le deal est prêt à être signé, l’utilisateur transforme le prospect en fiche client d’un clic.", "description": "Le statut prospect passe à « gagné » ; un client est créé avec lien vers le prospect d’origine.", "persona_relevance": { "P1": 3 }, "moscow": "Must", "complexite": "Moyenne", "dependance": ["PRO-MOD-01"] },
+        { "id": "PRO-PCV-02", "axe": "Parcours et conversion", "titre": "Après cette conversion, l’application ouvre tout de suite la fiche du nouveau client pour enchaîner devis ou contrat sans chercher dans la liste.", "description": "Réduit les allers-retours ; message d’erreur clair si l’API échoue.", "persona_relevance": { "P1": 3 }, "moscow": "Must", "complexite": "Faible", "dependance": ["PRO-PCV-01", "CLI-VIS-01"] }
+      ]
+    },
+    {
+      "bloc_id": "BLK-CLI",
+      "titre_bloc": "La fiche client est le pivot : tous les devis et contrats s’y rattachent pour un suivi clair.",
+      "resume_bloc": "Liste, détail enrichi (KPI, historiques), création manuelle ou depuis prospect.",
+      "sous_fonctionnalites": [
+        { "id": "CLI-CRE-01", "axe": "Création", "titre": "L’utilisateur peut créer un client à la main lorsqu’il n’est pas passé par le pipeline.", "description": "Saisie des identités légales minimales (nom, contact, SIRET optionnel).", "persona_relevance": { "P1": 2 }, "moscow": "Must", "complexite": "Faible", "dependance": [] },
+        { "id": "CLI-MOD-01", "axe": "Modification", "titre": "L’utilisateur met à jour à tout moment les coordonnées, l’adresse et les notes internes du client.", "description": "Les documents imprimés ultérieurs utilisent les valeurs à jour.", "persona_relevance": { "P1": 3 }, "moscow": "Must", "complexite": "Faible", "dependance": ["CLI-CRE-01", "PRO-PCV-01"] },
+        { "id": "CLI-VIS-01", "axe": "Visualisation", "titre": "L’utilisateur parcourt la liste des clients et ouvre une fiche qui regroupe devis, contrats, contacts, tâches et interactions.", "description": "Mini-listes cliquables vers chaque entité ; lien retour vers le prospect source si existant.", "persona_relevance": { "P1": 3 }, "moscow": "Must", "complexite": "Moyenne", "dependance": ["CLI-CRE-01"] },
+        { "id": "CLI-VIS-02", "axe": "Visualisation", "titre": "La fiche client affiche des indicateurs (nombre de contrats signés, CA HT, montant dû) calculés de façon cohérente HT ou TTC.", "description": "Une seule convention par écran : pas de mélange silencieux entre bases HT et TTC sur une même ligne.", "persona_relevance": { "P1": 3 }, "moscow": "Must", "complexite": "Moyenne", "dependance": ["CLI-VIS-01", "PAY-RGL-01"] },
+        { "id": "CLI-SUP-01", "axe": "Suppression", "titre": "L’utilisateur peut supprimer un client sans historique financier critique, sinon archivage ou blocage selon politique produit.", "description": "Évite les références orphelines sur devis/contrats en production.", "persona_relevance": { "P1": 1 }, "moscow": "Could", "complexite": "Moyenne", "dependance": ["CLI-VIS-01"] }
+      ]
+    },
+    {
+      "bloc_id": "BLK-CRM",
+      "titre_bloc": "Contacts, interactions et tâches restent lisibles à la fois côté « opportunité » et côté « client signé ».",
+      "resume_bloc": "Liens prospect_id et client_id partout où c’est pertinent ; listes exploitables après conversion.",
+      "sous_fonctionnalites": [
+        { "id": "CRM-CRE-01", "axe": "Création", "titre": "L’utilisateur enregistre un contact, une interaction (appel, mail, RDV…) ou une tâche en rattachant un prospect et/ou un client.", "description": "Au moins une des deux relations peut être vide si le contexte est mono (ex. relance uniquement client).", "persona_relevance": { "P1": 3 }, "moscow": "Must", "complexite": "Faible", "dependance": [] },
+        { "id": "CRM-MOD-01", "axe": "Modification", "titre": "L’utilisateur corrige ou complète depuis une modale sans perdre les liens existants.", "description": "", "persona_relevance": { "P1": 3 }, "moscow": "Must", "complexite": "Faible", "dependance": ["CRM-CRE-01"] },
+        { "id": "CRM-VIS-01", "axe": "Visualisation", "titre": "Les tableaux Contacts, Interactions et Tâches affichent une colonne « Lié à » avec un lien unique vers la meilleure fiche disponible.", "description": "Règle de résolution : fiche client prioritaire si un client existe (direct ou dérivé du prospect converti), sinon lien prospect ; — si aucune relation. Voir infra_phases.regle_ui_lien_organisationnel.", "persona_relevance": { "P1": 3 }, "moscow": "Must", "complexite": "Faible", "dependance": ["CRM-CRE-01"] },
+        { "id": "CRM-SUP-01", "axe": "Suppression", "titre": "L’utilisateur supprime une entrée CRM après confirmation.", "description": "", "persona_relevance": { "P1": 2 }, "moscow": "Must", "complexite": "Faible", "dependance": ["CRM-VIS-01"] }
+      ]
+    },
+    {
+      "bloc_id": "BLK-DEVIS",
+      "titre_bloc": "Les devis permettent de formaliser une offre chiffrée avant signature du contrat de prestation.",
+      "resume_bloc": "Lignes dynamiques, TVA, numérotation, statuts de cycle, impressions.",
+      "sous_fonctionnalites": [
+        { "id": "DV-CRE-01", "axe": "Création", "titre": "L’utilisateur crée un devis pour un client avec lignes libres, quantités, prix unitaire HT et taux de TVA.", "description": "Le numéro de devis est attribué automatiquement selon préfixe année (ex. DEV-2026-001).", "persona_relevance": { "P1": 3 }, "moscow": "Must", "complexite": "Moyenne", "dependance": ["CLI-VIS-01"] },
+        { "id": "DV-MOD-01", "axe": "Modification", "titre": "L’utilisateur fait évoluer le statut du devis (brouillon → envoyé → accepté/refusé/expiré) et les dates de validité.", "description": "", "persona_relevance": { "P1": 3 }, "moscow": "Must", "complexite": "Moyenne", "dependance": ["DV-CRE-01"] },
+        { "id": "DV-VIS-01", "axe": "Visualisation", "titre": "L’utilisateur consulte la liste des devis et la page détail avec totaux HT, TVA, TTC et textes annexes.", "description": "", "persona_relevance": { "P1": 3 }, "moscow": "Must", "complexite": "Faible", "dependance": ["DV-CRE-01"] },
+        { "id": "DV-RGL-01", "axe": "Règles et calculs automatiques", "titre": "Les montants ligne, sous-total HT, TVA et TTC sont recalculés à chaque changement de ligne ou de taux.", "description": "Source de vérité côté serveur lors de la commande de validation.", "persona_relevance": { "P1": 3 }, "moscow": "Must", "complexite": "Moyenne", "dependance": ["DV-CRE-01"] },
+        { "id": "DV-PRT-01", "axe": "Impression et export", "titre": "L’utilisateur génère une version imprimable ou PDF-ready du devis pour l’envoi au client.", "description": "MVP via CSS print ou rendu serveur sans moteur lourd.", "persona_relevance": { "P1": 3 }, "moscow": "Must", "complexite": "Moyenne", "dependance": ["DV-VIS-01"] },
+        { "id": "DV-PCV-01", "axe": "Parcours et conversion", "titre": "À partir d’un devis au statut « accepté », l’utilisateur lance la création d’un contrat prérempli avec mêmes lignes, TVA et client.", "description": "Réduit les erreurs de ressaisie et accélère la signature morale du workflow.", "persona_relevance": { "P1": 3 }, "moscow": "Must", "complexite": "Moyenne", "dependance": ["DV-MOD-01", "CTR-CRE-01"] }
+      ]
+    },
+    {
+      "bloc_id": "BLK-CTR",
+      "titre_bloc": "Le contrat matérialise la prestation et la période d’engagement avec le client.",
+      "resume_bloc": "Lignes, dates début/fin, statuts, lien devis, conditions, impressions.",
+      "sous_fonctionnalites": [
+        { "id": "CTR-CRE-01", "axe": "Création", "titre": "L’utilisateur crée un contrat rattaché à un client et optionnellement à un devis source.", "description": "Numérotation auto type CTR-AAAA-NNN.", "persona_relevance": { "P1": 3 }, "moscow": "Must", "complexite": "Moyenne", "dependance": ["CLI-VIS-01"] },
+        { "id": "CTR-MOD-01", "axe": "Modification", "titre": "L’utilisateur met à jour le statut juridique de suivi (brouillon, envoyé, signé, etc.) sans confondre avec le paiement réel.", "description": "", "persona_relevance": { "P1": 3 }, "moscow": "Must", "complexite": "Moyenne", "dependance": ["CTR-CRE-01"] },
+        { "id": "CTR-VIS-01", "axe": "Visualisation", "titre": "L’utilisateur consulte liste et détail contrat avec prestations et lien retour vers le devis.", "description": "", "persona_relevance": { "P1": 3 }, "moscow": "Must", "complexite": "Faible", "dependance": ["CTR-CRE-01"] },
+        { "id": "CTR-PRT-01", "axe": "Impression et export", "titre": "L’utilisateur imprime ou exporte le contrat avec en-tête, parties et conditions comme pour une version « à signer » hors outil.", "description": "E-sign en V2+.", "persona_relevance": { "P1": 3 }, "moscow": "Must", "complexite": "Moyenne", "dependance": ["CTR-VIS-01"] },
+        { "id": "CTR-SUP-01", "axe": "Suppression", "titre": "L’utilisateur peut supprimer un contrat encore brouillon ou selon les règles de rétention produit.", "description": "", "persona_relevance": { "P1": 1 }, "moscow": "Could", "complexite": "Faible", "dependance": ["CTR-VIS-01"] }
+      ]
+    },
+    {
+      "bloc_id": "BLK-PAY",
+      "titre_bloc": "Le suivi des paiements reste déclaratif : pas de facture légale générée dans l’app au MVP SaaS.",
+      "resume_bloc": "Facture envoyée et encaissements saisis → état lu seule dérivé.",
+      "sous_fonctionnalites": [
+        { "id": "PAY-MOD-01", "axe": "Modification", "titre": "Sur un contrat signé, l’utilisateur indique si la facture a été envoyée, à quelle date, pour quel montant attendu.", "description": "Champs saisis sans code marketing ; destinés au pilotage personnel.", "persona_relevance": { "P1": 3 }, "moscow": "Must", "complexite": "Moyenne", "dependance": ["CTR-MOD-01"] },
+        { "id": "PAY-MOD-02", "axe": "Modification", "titre": "L’utilisateur saisit les montants effectivement reçus (cumul ou versements selon conception retenue).", "description": "Décision MVP : table payment_lines (tenant_id, contrat_id, montant, date_encaissement, option libellé) + montant_recu_agrege sur le contrat ; statut dérivé PAY-RGL-01. V2 : extraire un agrégat Paiements autonome si le domaine grossit.", "persona_relevance": { "P1": 3 }, "moscow": "Must", "complexite": "Moyenne", "dependance": ["PAY-MOD-01"] },
+        { "id": "PAY-RGL-01", "axe": "Règles et calculs automatiques", "titre": "L’application calcule et affiche le statut paiement (non payé / partiel / payé) à partir des montants, sans champ statut à main libre contradictoire.", "description": "Règle documentée dans le domaine Nest ; projections read pour KPI.", "persona_relevance": { "P1": 3 }, "moscow": "Must", "complexite": "Moyenne", "dependance": ["PAY-MOD-02"] },
+        { "id": "PAY-VIS-01", "axe": "Visualisation", "titre": "Le statut et le détail paiement sont visibles sur la fiche contrat, la fiche client et le tableau de bord.", "description": "", "persona_relevance": { "P1": 3 }, "moscow": "Must", "complexite": "Faible", "dependance": ["PAY-RGL-01"] }
+      ]
+    },
+    {
+      "bloc_id": "BLK-PRJ",
+      "titre_bloc": "Les projets représentent la mission de delivery une fois la relation commerciale engagée.",
+      "resume_bloc": "Kanban livrable et pièces jointes PDF attachées au projet.",
+      "sous_fonctionnalites": [
+        { "id": "PRJ-CRE-01", "axe": "Création", "titre": "L’utilisateur ouvre un projet lié au client ou, en secours rétroactif, à un prospect encore suivi.", "description": "", "persona_relevance": { "P1": 2 }, "moscow": "Must", "complexite": "Faible", "dependance": [] },
+        { "id": "PRJ-MOD-01", "axe": "Modification", "titre": "Les tâches internes projet changent de colonne kanban jusqu’à « validé ».", "description": "", "persona_relevance": { "P1": 2 }, "moscow": "Must", "complexite": "Moyenne", "dependance": ["PRJ-CRE-01"] },
+        { "id": "PRJ-VIS-01", "axe": "Visualisation", "titre": "L’utilisateur voit tableau des projets puis détail avec board et lien client.", "description": "", "persona_relevance": { "P1": 2 }, "moscow": "Must", "complexite": "Moyenne", "dependance": ["PRJ-CRE-01"] },
+        { "id": "PRJ-DOC-01", "axe": "Création", "titre": "L’utilisateur téléverse des PDF qui restent reliés au projet pour consultation rapide.", "description": "", "persona_relevance": { "P1": 2 }, "moscow": "Must", "complexite": "Moyenne", "dependance": ["PRJ-VIS-01"] }
+      ]
+    },
+    {
+      "bloc_id": "BLK-DOC",
+      "titre_bloc": "À terme, les pièces se rattachent aussi au client ou au contrat pour un classement homogène.",
+      "resume_bloc": "Évolution par rapport au seul dossier projet du POC.",
+      "sous_fonctionnalites": [
+        { "id": "DOC-CRE-01", "axe": "Création", "titre": "L’utilisateur rattache une pièce depuis la fiche client ou contrat, en plus du contexte projet.", "description": "Stockage objet S3 ; métadonnées en base lecture.", "persona_relevance": { "P1": 2 }, "moscow": "Should", "complexite": "Moyenne", "dependance": ["CLI-VIS-01", "CTR-VIS-01"] },
+        { "id": "DOC-VIS-01", "axe": "Visualisation", "titre": "L’utilisateur ouvre ou télécharge chaque fichier depuis une liste unifiée filtrée par rattachement.", "description": "", "persona_relevance": { "P1": 2 }, "moscow": "Should", "complexite": "Faible", "dependance": ["DOC-CRE-01"] },
+        { "id": "DOC-SUP-01", "axe": "Suppression", "titre": "L’utilisateur retire une pièce devenue obsolete avec confirmation.", "description": "", "persona_relevance": { "P1": 1 }, "moscow": "Could", "complexite": "Faible", "dependance": ["DOC-VIS-01"] }
+      ]
+    },
+    {
+      "bloc_id": "BLK-DASH",
+      "titre_bloc": "Le tableau de bord donne une vision immédiate de l’activité et du cash encore attendu.",
+      "resume_bloc": "Cartes KPI, pipelines résumés, listes filtres entrants.",
+      "sous_fonctionnalites": [
+        { "id": "DASH-VIS-01", "axe": "Visualisation", "titre": "L’utilisateur voit en un coup d’œil le CA sous contrats, le vivier de devis envoyés et le montant encore dû agrégé.", "description": "Les définitions doivent correspondre aux même règles que PAY et CLI KPI.", "persona_relevance": { "P1": 3 }, "moscow": "Must", "complexite": "Moyenne", "dependance": ["PAY-RGL-01"] },
+        { "id": "DASH-VIS-02", "axe": "Visualisation", "titre": "Un bandeau d’« actions rapides » crée devis, contrat, prospect ou tâche sans naviguer plusieurs menus.", "description": "", "persona_relevance": { "P1": 2 }, "moscow": "Must", "complexite": "Faible", "dependance": [] },
+        { "id": "DASH-VIS-03", "axe": "Visualisation", "titre": "Des listes raccourcis affichent contrats actifs, derniers devis et tâches à traiter cette semaine.", "description": "Clic mène aux vues détaillées.", "persona_relevance": { "P1": 3 }, "moscow": "Must", "complexite": "Moyenne", "dependance": ["DASH-VIS-01"] }
+      ]
+    },
+    {
+      "bloc_id": "BLK-ALT",
+      "titre_bloc": "Le moteur d’alertes signale tout ce qui risque de glisser entre deux chaises sans action humaine.",
+      "resume_bloc": "Calculé depuis dates et statuts des agrégats.",
+      "sous_fonctionnalites": [
+        { "id": "ALT-VIS-01", "axe": "Alertes et rappels", "titre": "Les tâches en retard apparaissent dans un flux d’alertes cliquables vers la liste tâches ou la modale correspondante.", "description": "", "persona_relevance": { "P1": 3 }, "moscow": "Must", "complexite": "Moyenne", "dependance": ["CRM-VIS-01"] },
+        { "id": "ALT-VIS-02", "axe": "Alertes et rappels", "titre": "Les contrats qui approchent de leur date de fin ressortent dans la liste pour anticiper renouvellement ou clôture.", "description": "Fenêtre paramétrable (ex. 30 jours).", "persona_relevance": { "P1": 3 }, "moscow": "Must", "complexite": "Faible", "dependance": ["CTR-VIS-01"] },
+        { "id": "ALT-VIS-03", "axe": "Alertes et rappels", "titre": "Les devis envoyés après date de validité ou proches expiration figurent parmi les rappels commerciaux.", "description": "", "persona_relevance": { "P1": 3 }, "moscow": "Must", "complexite": "Faible", "dependance": ["DV-MOD-01"] },
+        { "id": "ALT-VIS-04", "axe": "Alertes et rappels", "titre": "Les paiements encore attendus selon PAY-RGL-01 créent une alerte avec lien contrat jusqu’à régularisation.", "description": "", "persona_relevance": { "P1": 3 }, "moscow": "Must", "complexite": "Moyenne", "dependance": ["PAY-RGL-01"] }
+      ]
+    },
+    {
+      "bloc_id": "BLK-AUTH",
+      "titre_bloc": "Chaque utilisateur dispose d’un espace isolé : ses données ne se mélangent jamais à celles d’un autre compte.",
+      "resume_bloc": "Auth, onboarding, quotas gratuits.",
+      "sous_fonctionnalites": [
+        { "id": "AUT-SEC-01", "axe": "Sécurité, compte et limites", "titre": "L’utilisateur crée un compte, se connecte et retrouve toujours le même jeu de données (tenant utilisateur unique au MVP).", "description": "Session sécurisée ; chaque query/commande porte le tenant.", "persona_relevance": { "P1": 3 }, "moscow": "Must", "complexite": "Haute", "dependance": [] },
+        { "id": "AUT-SEC-02", "axe": "Sécurité, compte et limites", "titre": "En mode gratuit la création de prospects ou clients au-delà de trois entités déclenche un écran ou modal d’upgrade explicite.", "description": "Compteur visible partout où on crée (prospect, client manuel).", "persona_relevance": { "P1": 2 }, "moscow": "Must", "complexite": "Moyenne", "dependance": ["AUT-SEC-01", "BIL-MOL-01"] },
+        { "id": "AUT-MOD-01", "axe": "Modification", "titre": "L’utilisateur met à jour son profil public (nom AE, mentions légales) réutilisées sur les gabarits imprimés.", "description": "", "persona_relevance": { "P1": 2 }, "moscow": "Must", "complexite": "Faible", "dependance": ["AUT-SEC-01"] }
+      ]
+    },
+    {
+      "bloc_id": "BLK-BILL",
+      "titre_bloc": "Le passage au plan payant s’effectue via Mollie avec un flux clair après la limite freemium.",
+      "resume_bloc": "Abonnements, webhooks état paiement SaaS.",
+      "sous_fonctionnalites": [
+        { "id": "BIL-MOL-01", "axe": "Facturation de l’application (SaaS)", "titre": "L’utilisateur souscrit depuis le CTA lorsque le quota est atteint et revient automatiquement en plan payant actif après confirmation PSP.", "description": "Mollie comme prestataire retenu ; pas de carte stockée localement.", "persona_relevance": { "P1": 2 }, "moscow": "Must", "complexite": "Haute", "dependance": ["AUT-SEC-01"] },
+        { "id": "BIL-MOL-02", "axe": "Modification", "titre": "L’utilisateur gère ensuite son abonnement (annulation préavis, mise à jour moyen de paiement) selon exposition Mollie.", "description": "", "persona_relevance": { "P1": 1 }, "moscow": "Should", "complexite": "Moyenne", "dependance": ["BIL-MOL-01"] }
+      ]
+    },
+    {
+      "bloc_id": "BLK-NOT",
+      "titre_bloc": "Les événements métiers peuvent pousser l’information sur l’écran sans refresh manuel lorsque pertinent.",
+      "resume_bloc": "Sockets ou SSE — priorité SHOULD.",
+      "sous_fonctionnalites": [
+        { "id": "NOT-RGL-01", "axe": "Alertes et rappels", "titre": "Une nouvelle alerte métier ou un changement critique (ex. paiement complet) reflète vite sur le dashboard.", "description": "MVP : pas de SSE/WebSocket ; invalidation TanStack Query, revalidation Next ou refetch léger après mutation. SHOULD reste léger hors infra temps réel. V2 : projecteurs + sockets/SSE si besoin métier réel mesuré.", "persona_relevance": { "P1": 2 }, "moscow": "Should", "complexite": "Faible", "dependance": ["DASH-VIS-01"] }
+      ]
+    },
+    {
+      "bloc_id": "BLK-EDI",
+      "titre_bloc": "Les textes juridiques longs restent lisibles et éditables sans syntaxe Markdown imposée à l’utilisateur final.",
+      "resume_bloc": "Toolbar type éditeur riche conforme périmètre MVP.",
+      "sous_fonctionnalites": [
+        { "id": "EDI-MOD-01", "axe": "Modification", "titre": "L’utilisateur met en forme ses conditions générales et clauses avec boutons gras / listes au lieu du code Markdown nu.", "description": "Le stockage reste brut structuré côté base (HTML ou MD généré).", "persona_relevance": { "P1": 2 }, "moscow": "Should", "complexite": "Moyenne", "dependance": ["DV-MOD-01", "CTR-MOD-01"] }
+      ]
+    }
+  ],
+  "user_stories": [
+    {
+      "id": "US-001",
+      "titre": "Colonne « Lié à » sur la liste Contacts",
+      "en_tant_que": "Marie",
+      "je_veux": "voir en un clic la fiche la plus utile (client si déjà converti, sinon prospect)",
+      "afin_de": "naviguer sans me tromper d’entité après conversion client",
+      "critères_acceptation": [
+        "La grille Contacts affiche Nom, Rôle, Lié à (voir infra_phases.regle_ui_lien_organisationnel), Email.",
+        "Clic « Lié à » ouvre la fiche client si résolution client, sinon la fiche prospect ; — si aucun lien.",
+        "Régression : création/édition contact inchangée fonctionnellement."
+      ],
+      "moscow": "Must",
+      "complexite": "Faible",
+      "depend_de": []
+    },
+    {
+      "id": "US-002",
+      "titre": "Colonne « Lié à » sur la liste Interactions",
+      "en_tant_que": "Marie",
+      "je_veux": "voir l’organisation associée avec la même priorité client qu’ailleurs",
+      "afin_de": "retrouver les échanges après signature sans colonnes redondantes",
+      "critères_acceptation": [
+        "Colonnes incluent « Lié à » selon infra_phases.regle_ui_lien_organisationnel ; lien ou —.",
+        "Tri et ouverture modale depuis la ligne conservés."
+      ],
+      "moscow": "Must",
+      "complexite": "Faible",
+      "depend_de": []
+    },
+    {
+      "id": "US-003",
+      "titre": "Colonne « Lié à » sur la liste Tâches",
+      "en_tant_que": "Marie",
+      "je_veux": "voir d’un coup l’organisation liée comme sur Contacts et Interactions",
+      "afin_de": "prioriser sans passer par plusieurs écrans",
+      "critères_acceptation": [
+        "Colonnes Titre, Statut, Échéance, Lié à ; règle identique à US-001.",
+        "Marquer fait et éditer restent disponibles depuis la liste."
+      ],
+      "moscow": "Must",
+      "complexite": "Faible",
+      "depend_de": []
+    },
+    {
+      "id": "US-004",
+      "titre": "Ouverture fiche client après conversion prospect",
+      "en_tant_que": "Marie",
+      "je_veux": "atterrir directement sur le client créé quand je clique Vers client",
+      "afin_de": "enchaîner devis/contrat sans chercher dans la liste",
+      "critères_acceptation": [
+        "Succès POST convert-prospect : navigation vers vue Clients avec détail ouvert.",
+        "En erreur réseau ou API : utilisateur informé sans état cassé localement.",
+        "La liste Clients est cohérente avec le nouveau client."
+      ],
+      "moscow": "Must",
+      "complexite": "Faible",
+      "depend_de": []
+    },
+    {
+      "id": "US-005",
+      "titre": "Contrat depuis devis accepté",
+      "en_tant_que": "Marie",
+      "je_veux": "pré-remplir un contrat à partir du devis signé",
+      "afin_de": "ne pas retaper lignes ni TVA",
+      "critères_acceptation": [
+        "Bouton sur détail devis si statut accepté préremplit client lignes TVA lien devis_id.",
+        "Numérotation contrat CTR-AAAA-NNN via commande/backend."
+      ],
+      "moscow": "Must",
+      "complexite": "Moyenne",
+      "depend_de": []
+    },
+    {
+      "id": "US-007",
+      "titre": "Modèle paiement Consensus sur contrat",
+      "en_tant_que": "Marie",
+      "je_veux": "déclarer facture envoyée et montants plutôt qu’un statut arbitraire",
+      "afin_de": "avoir confiance dans le champ statut paiement",
+      "critères_acceptation": [
+        "Champs : facture_envoyee_bool, date_envoi_facture optionnelle, montant_facture_ttc ou attendu conforme régle métier.",
+        "montant_recu agrégé ; statut paiement uniquement lu et recalculé côté serveur.",
+        "Règle : aucun paiement→non_payé ; partiel ; total reçu >= attendu→payé."
+      ],
+      "moscow": "Must",
+      "complexite": "Moyenne",
+      "depend_de": []
+    },
+    {
+      "id": "US-008",
+      "titre": "KPI clients cohérents HT/TTC",
+      "en_tant_que": "Marie",
+      "je_veux": "que montant dû et CA utilisent une convention unique",
+      "afin_de": "ne pas mélanger HT et TTC sur la même ligne",
+      "critères_acceptation": [
+        "Spéc documentée : soit tout TTC paiements soit tout HT avec TVA en sous-couche ; pas de soustraction croisée."],
+      "moscow": "Must",
+      "complexite": "Faible",
+      "depend_de": ["US-007"]
+    },
+    {
+      "id": "US-009",
+      "titre": "Freemium 3+3 blocage élégant",
+      "en_tant_que": "utilisateur gratuit",
+      "je_veux": "être orienté paiement avant dépassement",
+      "afin_de": "convertir sans surprise",
+      "critères_acceptation": [
+        "Création prospect/client au-delà de la limite → message + CTA Mollie checkout.",
+        "Compteurs : agrégats SQL MVP ou read model selon infra active ; valeur identique quel que soit l’implémentation."]
+      ,
+      "moscow": "Must",
+      "complexite": "Haute",
+      "depend_de": ["BIL-MOL-01"]
+    }
+  ],
+  "diagrammes_utilisation": [
+    {
+      "fonctionnalite_id": "PRO-PCV-02",
+      "acteur_principal": "P1",
+      "declencheur": "Clic Bouton Vers client depuis fiche prospect",
+      "flux": [
+        { "etape": "POST convert-prospect", "type": "action" },
+        { "etape": "réponse succès ?", "type": "condition", "branche_oui": "goto clients detailId", "branche_non": "message erreur" },
+        { "etape": "Marie voit fiche client créée", "type": "resultat" }
+      ],
+      "variantes": [],
+      "erreurs": [{ "situation": "HTTP non 2xx", "comportement": "Alerte blocante ; pas de push client fantôme" }],
+      "pre_conditions": ["Prospect CLOSING ou CLOSING_GAGNÉ", "Pas encore de client même prospect_id"],
+      "post_conditions": ["Prospect CLOSING_GAGNÉ", "Client existe avec lien prospect"]
+    },
+    {
+      "fonctionnalite_id": "CRM-VIS-01",
+      "acteur_principal": "P1",
+      "declencheur": "Consultation liste Contacts",
+      "flux": [
+        { "etape": "Query ListeContacts(read)", "type": "action" },
+        { "etape": "Affichage colonne Lié à résolue (client prioritaire puis prospect)", "type": "resultat" }
+      ],
+      "variantes": [],
+      "erreurs": [],
+      "pre_conditions": [],
+      "post_conditions": []
+    }
+  ],
+  "spec_technique": {
+    "note_stack_reference": "Les piles détaillées par phase sont dans infra_phases.mvp_infra_minimal.stack et infra_phases.v2_aspirationnel.stack.",
+    "bounded_contexts": [
+      {
+        "nom": "Prospect",
+        "description": "Pipeline avant client",
+        "agregats": ["Prospect"],
+        "evenements": [{"nom": "ProspectCreated", "payload": {"tenantId":"","prospectId":"","nom":"","statut":""}, "producteur": "Prospect", "consommateurs": ["Clients", "Notifications"]}],
+        "commandes": [{"nom": "ConvertProspectToClient", "payload": {"prospectId":""}}]
+      },
+      {
+        "nom": "Clients",
+        "description": "Comptes signés multi-devis/contrats",
+        "agregats": ["Client"],
+        "evenements": [{"nom": "ClientCreatedFromProspect", "payload": {"clientId":"","prospectId":""}, "producteur": "Clients", "consommateurs": ["ReadModel", "Billing"]}],
+        "commandes": []
+      },
+      {
+        "nom": "Devis",
+        "description": "Offres avec lignes TVA statuts",
+        "agregats": ["Devis"],
+        "evenements": [{"nom": "DevisAccepted", "payload": {"devisId":"","clientId":""}, "producteur": "Devis", "consommateurs": ["Contrats"]}],
+        "commandes": []
+      },
+      {
+        "nom": "Contrats",
+        "description": "Prestations signées jusqu’à paiement suivie",
+        "agregats": ["Contrat"],
+        "evenements": [{"nom": "ContractDraftedFromQuote", "payload": {}, "producteur": "Contrats", "consommateurs": ["Documents", "ReadModel"]}],
+        "commandes": []
+      },
+      {
+        "nom": "Paiements",
+        "description": "Entrées facture envoyée + encaissement ; MVP modélisation PAY-MOD-02 avec payment_lines ; V2 peut extraire agrégat Paiements.",
+        "agregats": ["MVP: Contrat comme racine fonctionnelle + lignes payment_line / snapshot montant_recu_agrege", "V2 cible: agrégat Encaissement ou Paiements découplé"],
+        "evenements": [{"nom": "PaymentReceivedRecorded", "payload": {}, "producteur": "Paiements", "consommateurs": ["Alertes", "ReadModel"]}],
+        "commandes": []
+      }
+    ],
+    "schema_db_ecriture": [],
+    "schema_db_lecture": [],
+    "schema_db_notes": {
+      "mvp_schema_unique": [
+        "users_or_accounts (+ mollie_customer_id, mollie_mandate_id)",
+        "prospects",
+        "clients",
+        "contacts",
+        "interactions",
+        "tasks",
+        "devis + devis_lines",
+        "contrats + contracts_lines",
+        "payment_lines (encaissement métier livrables client)",
+        "subscriptions_saas + invoices_or_payments_saas (billing Mollie)",
+        "alerts (historique + snooze)",
+        "documents (métadonnées polymorphes + clé fichier S3)",
+        "projects",
+        "project_tasks",
+        "user_profile_print"
+      ],
+      "v2_when_bus": ["event_store ou table events dans schéma write", "schéma read projeté ou vues matérialisées", "outbox avant RabbitMQ"],
+      "detail_a_produire": "ERD DDL à produire lors de la première itération Nest ; ce bloc fige uniquement les entités nominées."
+    },
+    "api_commands": [
+      { "methode": "POST", "route": "/commands/convert-prospect", "command": "ConvertProspectToClient", "description": "ProspectClosingWon puis Client créé — side effects événements" },
+      { "methode": "POST", "route": "/commands/devis/from-accepted", "command": "CreateContractFromDevis", "description": "Prérempli depuis DevisAccepted" },
+      { "methode": "POST", "route": "/commands/payment/record-received", "command": "RecordPaymentReceived", "description": "Met à jour statut paiement projeté via règle" }
+    ],
+    "api_queries": [
+      { "methode": "GET", "route": "/queries/contacts", "query": "ListContactsWithLinks", "description": "Champs lien affichés ; résolution client prioritaire côté service (voir infra_phases.regle_ui_lien_organisationnel)" },
+      { "methode": "GET", "route": "/queries/dashboard", "query": "DashboardSummary", "description": "KPI + liste alertes" }
+    ],
+    "flux_par_phase": [
+      {
+        "phase": "MVP infra minimal",
+        "etapes": [
+          { "etape": 1, "description": "Requête HTTP → handler Nest module domaine valide invariants et tenant", "type": "command" },
+          { "etape": 2, "description": "Transaction Postgres : persistance tables métier ; option table outbox pour job différé", "type": "transaction" },
+          { "etape": 3, "description": "Réponse API ; client Next invalide cache (TanStack Query / revalidatePath)", "type": "client" }
+        ]
+      },
+      {
+        "phase": "V2 aspirationnel",
+        "etapes": [
+          { "etape": 1, "description": "Commande POST → handler valide invariant agrégat", "type": "command" },
+          { "etape": 2, "description": "Événements persistés + publiés bus (RabbitMQ)", "type": "event" },
+          { "etape": 3, "description": "Projectors MAJ tables read (+ invalidation Redis sélective)", "type": "projection" },
+          { "etape": 4, "description": "GET queries sur read model ou cache", "type": "query" }
+        ]
+      }
+    ],
+    "flux_evenementiel": [
+      { "etape": 1, "description": "[V2] Commande POST → Handler valide invariant agrégat", "type": "command" },
+      { "etape": 2, "description": "[V2] Événements persistés + publiés bus RabbitMQ", "type": "event" },
+      { "etape": 3, "description": "[V2] Projectors MAJ tables read (+ Redis invalidation sélective)", "type": "projection" },
+      { "etape": 4, "description": "[V2] GET queries lecture read model ou cache", "type": "query" }
+    ]
+  },
+  "spec_utilisateur": {
+    "onboarding": [
+      { "etape": 1, "description": "Inscription tenant + email vérifie", "action_attendue": "Complète profil auto-entreprise réutilisé sur print templates", "feedback": "Bienvenue + limites gratuit" },
+      { "etape": 2, "description": "Premier prospect", "action_attendue": "Créer carte pipeline", "feedback": "Compteur 1/3" }
+    ],
+    "parcours": [
+      {
+        "nom": "Conversion client immédiate",
+        "etapes": [
+          { "etape": 1, "description": "Fiche prospect en closing", "action": "Clic Vers client", "resultat": "Ouverture fiche client liste détails" },
+          { "etape": 2, "description": "Fiche client", "action": "Clic + Devis", "resultat": "Modale avec client pré-sélectionné" }
+        ]
+      },
+      {
+        "nom": "Suivi liste CRM",
+
+        "etapes": [
+          { "etape": 1, "description": "Menu Contacts ou Tâches", "action": "Identifier ligne via la colonne Lié à", "resultat": "Navigation 1 clic vers client ou prospect" }
+        ]
+      }
+    ],
+    "messages": [
+      { "contexte": "convert-prospect erreur", "message": "La conversion n’a pas pu être effectuée. Réessaie ou vérifie la connexion." },
+      { "contexte": "freemium plein", "message": "Tu as atteint la limite gratuite — passe au plan pour continuer." }
+    ],
+    "etats_transitions": [
+      {
+        "cas": "devis_expiration",
+        "statut_catalogue_metier": "Le statut expiré reste attribuable manuellement via DV-MOD-01 comme aujourd’hui.",
+        "affichage_alerte": "ALT-VIS-03 : comparaison date du jour avec date_validité pour devis envoyé — aucun changement obligatoire de statut métier MVP.",
+        "option_A_projection": "Cron quotidien (job Nest) passe en expiré côté base si équipe produit décide automatiser ; doit rester idempotent et logué tenant.",
+        "option_B_evenement_programme_MVP_PLUS": "Hors MVP minimal ; lorsque bus V2 existe, publisher timer → consumer qui applique même règle qu’option A.",
+        "clarification": "Ne pas fusionner trois mécaniques : choisir manuel OU cron OU événements programmés en production ; défaut conseillé MVP : alertes + passage manuel expiré."
+      }
+    ],
+    "gestion_erreurs": [
+      { "erreur": "Limite quota", "cause": "Freemium", "message_utilisateur": "Limite gratuit atteinte", "recuperation": "CTA checkout abonnement Mollie (pas de Stripe pour le billing SaaS au MVP)" }
+    ]
+  },
+  "poc_tracking": {
+    "statut_poc": "Référence figée — plus de développement actif sur prospection/",
+    "fichiers": ["prospection/index.html", "prospection/server.js"],
+    "deja_aligne": ["US-001", "US-002", "US-003", "US-004", "US-005"],
+    "note": "US-007 et US-008 ne sont plus des travaux POC : modèle données et règles dans decisions_modele_donnees_mvp + docs/db/schema-mvp.dbml + docs/db/001_schema_mvp.sql ; implémentation SaaS selon PLAN_DEVELOPPEMENT_MVP.md."
+  }
+}
