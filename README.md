@@ -1,9 +1,22 @@
-En avril 2026 je relance mon activité de freelance après avoir passé 3 ans en tant que CTO d'une startup. Ces 3 ans ont été très agité, malheureusement malgré le travail intensif, je n'ai pas eu le temps de mettre en place une infrastructure scalable. 
+# SaaS freelance — building in public
 
-Cela s'explique par 2 éléments majeurs. Premièrement je n'avais encore jamais eu à implémenter une architecture scalable sur un SaaS. Deuxièmement je n'avais pas le temps de faire les choses dans l'ordre : recherche, cadrage, développement. 
+Je relance mon activité de freelance en **avril 2026**, après **trois ans en tant que CTO** d’une startup. Période intense sur le plan humain et produit — et côté technique, je n’ai jamais eu le loisir de poser une **infra vraiment scalable**. Ce n’était ni mon profil d’origine (premier gros SaaS à cette échelle), ni compatible avec le rythme : on enchaînait sans toujours respecter l’ordre **recherche → cadrage → développement**.
 
-Je tire donc 2 conlusions majeure de ce projet côté technique. Bien que travailler sur un projet de SaaS nécessite d'aller vite on perd toujours du temps en prenant des raccourcis. L'architecture initiale d'un SaaS peut être minimaliste mais il faut malgré tout anticipé le volume et ne pas construire l'API endpoint seulement sous forme REST ou CRUD. L'accompagné d'une logique minimaliste d'Event Drive Architecture (EDA) permet d'anticipé une refactorisation future pour accélérer l'application. Cela permet aussi d'avoir un processus de développement de nouvelles features bien plus rapide. 
+## Ce que j’en retiens
 
-J'apprend de mes erreurs, c'est pour cela qu'aujourd'hui je prend le temps d'implémenter une EDA minimaliste sur un projet de SaaS. L'objectif de ce SaaS est de répondre à mes besoins en tant que Freelance : Pipeline commerciale, Devis, Gestion de contrats, Suivi de projets, Suivi des paiements, Dashboard. Le tout en documentant le développement en public pour obtenir des retours constructif et montrer le processus de création.
+**Aller vite en prenant des raccourcis, ça coûte du temps.** Sur un SaaS, une base minimaliste au départ est OK, mais il faut quand même **anticiper le volume** et éviter de figer toute l’API en pur REST/CRUD sans réflexion. Une **EDA minimaliste** (event-driven) dès le départ aide à préparer des évolutions plus tard — et à livrer des features plus vite quand le produit s’accélère.
 
-Vous pourrez suivre l'évolution de ce projet sur ce repository [GitHub](https://github.com/AreAtomic/saas-freelance-building-in-public) et sur mon site web [aureliensebe.com/blog](aureliensebe.com/blog)
+**Je le fais maintenant, consciemment**, sur un produit que je construis pour **mon propre usage freelance** : pipeline commercial, devis, contrats, suivi de projets, paiements, dashboard — le tout **documenté en public** pour les retours et pour montrer le process, pas seulement le résultat.
+
+## Suivre le projet
+
+- **Code & historique** : [github.com/AreAtomic/saas-freelance-building-in-public](https://github.com/AreAtomic/saas-freelance-building-in-public)
+- **Articles & notes** : [aureliensebe.com/blog](https://aureliensebe.com/blog)
+
+## Pour les curieux technique / produit
+
+La spec détaillée (user stories, MVP, infra, DDL) vit dans ce dossier agent : `gestionnaire-contrats-freelance-spec.json` / `.html`, plan de dev dans `docs/PLAN_DEVELOPPEMENT_MVP.md`. Le code applicatif cible le dossier **`crm-freelance/`** à la racine du workspace — ce repo README reste le fil narratif *building in public* ; la doc machine est à côté.
+
+---
+
+*Aurélien Sèbe — développement freelance fullstack. Questions ou retours : ouverts.*
